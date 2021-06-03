@@ -117,6 +117,40 @@ MulticopterAttitudeControl::throttle_curve(float throttle_stick_input)
 	}
 }
 
+bool
+MulticopterAttitudeControl::set_inverted_hovering_point(const matrix::Quatf &q, const matrix::Vector3f &rate,
+		float v_norm)
+{
+	static bool set_flag = false;
+	static int check_count = 0;
+	const float roll = Eulerf(q).phi();
+
+	// const float pitch = Eulerf(q).theta();
+	// if (v_norm > 0.95f * _man_tilt_max) {
+	// 	check_count++;
+	// 	if (check_count > 100) {
+	// 		set_flag = !set_flag;
+	// 		check_count = 0;
+	// 	}
+	// } else if ((abs(roll) > M_PI_2_F) || (abs(pitch) > M_PI_2_F)) {
+	// 	set_flag = true;
+	if (check_count > 1000) {
+		if ((roll > 0.95f * _man_tilt_max && roll < 1.05f * _man_tilt_max) || (roll < -0.95f * _man_tilt_max
+				&& roll > -1.05f * _man_tilt_max)) {
+			set_flag = true;
+			check_count = 0;
+
+		} else if ((roll > 0.95f * (M_PI_F - _man_tilt_max) && roll < 1.05f * (M_PI_F - _man_tilt_max))
+			   || (roll < -0.95f * (M_PI_F - _man_tilt_max) && roll > -1.05f * (M_PI_F - _man_tilt_max))) {
+			set_flag = false;
+			check_count = 0;
+		}
+	}
+
+	check_count++;
+	return set_flag;
+}
+
 void
 MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt, bool reset_yaw_sp)
 {
@@ -209,6 +243,24 @@ MulticopterAttitudeControl::generate_attitude_setpoint(const Quatf &q, float dt,
 
 	/* copy quaternion setpoint to attitude setpoint topic */
 	Quatf q_sp = Eulerf(attitude_setpoint.roll_body, attitude_setpoint.pitch_body, attitude_setpoint.yaw_body);
+
+	vehicle_angular_velocity_s angular_velocity;
+	static Vector3f rates;
+	static Quatf q_h;
+
+	if (_vehicle_angular_velocity_sub.update(&angular_velocity)) {
+		rates = Vector3f{angular_velocity.xyz};
+	}
+
+	if (set_inverted_hovering_point(q, rates, v_norm)) {
+		q_h = Quatf(0, 1, 0, 0);
+
+	} else {
+		q_h = Quatf(1, 0, 0, 0);
+	}
+
+	q_sp = q_h * q_sp;
+
 	q_sp.copyTo(attitude_setpoint.q_d);
 
 	attitude_setpoint.thrust_body[2] = -throttle_curve(math::constrain(_manual_control_setpoint.z, 0.0f, 1.0f));
